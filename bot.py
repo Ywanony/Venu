@@ -57,13 +57,13 @@ from telebot import types
 # CONFIG
 # ============================================================
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8894339879:AAG9YNCJEs8S1ztygtzZZLmN-4V1g5KBQOg").strip()
+BOT_TOKEN = os.getenv("BOT_TOKEN", "7042790112:AAH7bpJr8bMoMstA8MNNHq1bn6JTiYqla90").strip()
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "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").strip()
 SUPABASE_URL = os.getenv("SUPABASE_URL", "https://hhelxewgwuqcloofyeyw.supabase.co").strip().rstrip("/")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhoZWx4ZXdnd3VxY2xvb2Z5ZXl3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk0NzIyNTUsImV4cCI6MjA5NTA0ODI1NX0.EL0wb1HKvT9lJLtMW7p-y0X3fwgC1LeFrts7ErHVD54").strip()
 
-ADMIN_ID = 8793053750
-BOT_USERNAME = "Chatbotgebot"
+ADMIN_ID = 7422809081
+BOT_USERNAME = "lunwtbwts_bot"
 MODEL_NAME = os.getenv("MODEL_NAME", "llama-3.3-70b-versatile")
 
 PORT = int(os.getenv("PORT", "10000"))
