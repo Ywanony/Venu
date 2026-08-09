@@ -1127,7 +1127,7 @@ def send_add_me_in_group(message):
         message,
         "➕ **Add Venu In Group**\n\n"
         "Button dabao, group select karo aur Venu ko add kar do. 😎🔥\n\n"
-        "Group mein mujhe **@Chatbotgebot** mention karo ya meri message ko reply karo.",
+        "Group mein mujhe **@lunwtbwts_bot** mention karo ya meri message ko reply karo.",
         reply_markup=markup,
     )
 
