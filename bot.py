@@ -58,7 +58,7 @@ from telebot import types
 # ============================================================
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "7042790112:AAHkZ8x9-G8ALmVRy79WbCldTU_MiKdd17I").strip()
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "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").strip()
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "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").strip()
 SUPABASE_URL = os.getenv("SUPABASE_URL", "https://hhelxewgwuqcloofyeyw.supabase.co").strip().rstrip("/")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhoZWx4ZXdnd3VxY2xvb2Z5ZXl3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk0NzIyNTUsImV4cCI6MjA5NTA0ODI1NX0.EL0wb1HKvT9lJLtMW7p-y0X3fwgC1LeFrts7ErHVD54").strip()
 
