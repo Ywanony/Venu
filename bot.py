@@ -42,7 +42,7 @@ def env_int(key, default=0):
 # CONFIG — ALL SETTINGS DIRECTLY HERE
 # ============================================================
 
-BOT_TOKEN = "8868005439:AAHGetUn8FwoJNO1VwKWyywr08wP-f1vWDU"
+BOT_TOKEN = "7042790112:AAH7lGNfNNHU5qRtDQHzD8rO2b1Q_byLVkY"
 
 AI_API_KEY = "sk-5d02b9dcd5a2caf79a7e9d4d97b490915cec2b51fb2be11b1662a42768505df5"
 AI_BASE_URL = "https://api.mwapi.dev/v1"
@@ -51,7 +51,7 @@ AI_MODEL = "claude-sonnet-4-6"
 SUPABASE_URL = "https://necofapukgwalgviqxue.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5lY29mYXB1a2d3YWxndmlxeHVlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY1ODk4NjIsImV4cCI6MjEwMjE2NTg2Mn0.mihtDHVKHeiacEC1Q8FnXtCdvFIYLMlRRApyKE2qcj8"
 
-ADMIN_ID = 7436383192
+ADMIN_ID = 8459158216
 
 PORT = 10000
 
