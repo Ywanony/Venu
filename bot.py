@@ -42,7 +42,7 @@ def env_int(key, default=0):
 # CONFIG — ALL SETTINGS DIRECTLY HERE
 # ============================================================
 
-BOT_TOKEN = "7042790112:AAH7lGNfNNHU5qRtDQHzD8rO2b1Q_byLVkY"
+BOT_TOKEN = "7042790112:AAGM4k5zIKBabxDJ35Pnw17o-N9Sf9hCYUU"
 
 AI_API_KEY = "sk-5d02b9dcd5a2caf79a7e9d4d97b490915cec2b51fb2be11b1662a42768505df5"
 AI_BASE_URL = "https://api.mwapi.dev/v1"
