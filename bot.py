@@ -12,14 +12,11 @@ from difflib import SequenceMatcher
 from logging.handlers import RotatingFileHandler
 
 from cachetools import TTLCache
-
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-
 from flask import Flask
-
-from gtts import gTTS
+from gTTS import gTTS
 from pydub import AudioSegment
 import speech_recognition as sr
 
@@ -27,54 +24,32 @@ import telebot
 from telebot import types
 from telebot.apihelper import ApiTelegramException
 
-
 # ============================================================
-# CONFIG
-# ============================================================
-
-def env_int(key, default=0):
-    try:
-        return int(os.getenv(key, str(default)).strip())
-    except Exception:
-        return default
-
-# ============================================================
-# CONFIG — ALL SETTINGS DIRECTLY HERE
+# CONFIG — SECURE ENVIRONMENT LOADERS
 # ============================================================
 
-BOT_TOKEN = "7042790112:AAGM4k5zIKBabxDJ35Pnw17o-N9Sf9hCYUU"
+def get_env(key, default=""):
+    return os.getenv(key, default).strip()
 
-AI_API_KEY = "sk-5d02b9dcd5a2caf79a7e9d4d97b490915cec2b51fb2be11b1662a42768505df5"
-AI_BASE_URL = "https://api.mwapi.dev/v1"
-AI_MODEL = "claude-sonnet-4-6"
+BOT_TOKEN = get_env("BOT_TOKEN", "7042790112:AAGM4k5zIKBabxDJ35Pnw17o-N9Sf9hCYUU")
+AI_API_KEY = get_env("AI_API_KEY", "sk-5d02b9dcd5a2caf79a7e9d4d97b490915cec2b51fb2be11b1662a42768505df5")
+AI_BASE_URL = get_env("AI_BASE_URL", "https://api.mwapi.dev/v1")
+AI_MODEL = get_env("AI_MODEL", "claude-sonnet-4-6")
 
-SUPABASE_URL = "https://necofapukgwalgviqxue.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5lY29mYXB1a2d3YWxndmlxeHVlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY1ODk4NjIsImV4cCI6MjEwMjE2NTg2Mn0.mihtDHVKHeiacEC1Q8FnXtCdvFIYLMlRRApyKE2qcj8"
+SUPABASE_URL = get_env("SUPABASE_URL", "https://necofapukgwalgviqxue.supabase.co")
+SUPABASE_KEY = get_env("SUPABASE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5lY29mYXB1a2d3YWxndmlxeHVlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY1ODk4NjIsImV4cCI6MjEwMjE2NTg2Mn0.mihtDHVKHeiacEC1Q8FnXtCdvFIYLMlRRApyKE2qcj8")
 
-ADMIN_ID = 8459158216
-
-PORT = 10000
+ADMIN_ID = int(get_env("ADMIN_ID", "8459158216"))
+PORT = int(get_env("PORT", "10000"))
 
 ENABLE_TTS = True
 RESPOND_IN_GROUPS = True
-
 AI_TIMEOUT = 18
 AI_RETRIES = 2
-required_env = {
-    "BOT_TOKEN": BOT_TOKEN,
-    "AI_API_KEY": AI_API_KEY,
-    "AI_BASE_URL": AI_BASE_URL,
-    "AI_MODEL": AI_MODEL,
-    "SUPABASE_URL": SUPABASE_URL,
-    "SUPABASE_KEY": SUPABASE_KEY,
-}
 
-for name, value in required_env.items():
-    if not value:
-        raise RuntimeError(
-            f"{name} environment variable is missing."
-        )
-
+# Check essential configs
+if not BOT_TOKEN or not AI_API_KEY:
+    raise RuntimeError("Critical API keys missing in environment configuration.")
 
 # ============================================================
 # LOGGING
@@ -83,213 +58,97 @@ for name, value in required_env.items():
 logging.basicConfig(
     level=logging.INFO,
     handlers=[
-        RotatingFileHandler(
-            "bot.log",
-            maxBytes=5 * 1024 * 1024,
-            backupCount=5,
-            encoding="utf-8",
-        ),
+        RotatingFileHandler("bot.log", maxBytes=5 * 1024 * 1024, backupCount=5, encoding="utf-8"),
         logging.StreamHandler(),
     ],
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
-
 logger = logging.getLogger("venu")
-
 
 # ============================================================
 # HTTP SESSION
 # ============================================================
 
 http = requests.Session()
-
 retry_strategy = Retry(
     total=2,
     connect=2,
     read=2,
     backoff_factor=0.4,
     status_forcelist=[429, 502, 503, 504],
-    allowed_methods=frozenset(
-        ["GET", "POST", "PATCH", "DELETE"]
-    ),
+    allowed_methods=frozenset(["GET", "POST", "PATCH", "DELETE"]),
     raise_on_status=False,
 )
 
-http.mount(
-    "https://",
-    HTTPAdapter(
-        pool_connections=20,
-        pool_maxsize=50,
-        max_retries=retry_strategy,
-    ),
-)
-
-http.mount(
-    "http://",
-    HTTPAdapter(
-        pool_connections=20,
-        pool_maxsize=50,
-        max_retries=2,
-    ),
-)
-
+http.mount("https://", HTTPAdapter(pool_connections=20, pool_maxsize=50, max_retries=retry_strategy))
+http.mount("http://", HTTPAdapter(pool_connections=20, pool_maxsize=50, max_retries=2))
 
 # ============================================================
-# TELEGRAM
+# TELEGRAM SETUP
 # ============================================================
 
-bot = telebot.TeleBot(
-    BOT_TOKEN,
-    parse_mode=None,
-    threaded=True,
-    num_threads=8,
-)
-
+bot = telebot.TeleBot(BOT_TOKEN, parse_mode=None, threaded=True, num_threads=8)
 BOT_ID = None
 BOT_USERNAME = ""
 
 try:
     me = bot.get_me()
-
     BOT_ID = me.id
     BOT_USERNAME = (me.username or "").lower()
-
-    logger.info(
-        "Telegram connected: @%s (%s)",
-        BOT_USERNAME,
-        BOT_ID,
-    )
-
+    logger.info("Telegram connected: @%s (%s)", BOT_USERNAME, BOT_ID)
 except Exception:
     logger.exception("Telegram get_me failed")
 
-
 # ============================================================
-# SUPABASE
+# DATABASE (SUPABASE)
 # ============================================================
 
 class DB:
-
     def __init__(self, url, key):
         self.url = url.rstrip("/")
-
         self.headers = {
             "apikey": key,
             "Authorization": f"Bearer {key}",
             "Content-Type": "application/json",
         }
 
-    def request(
-        self,
-        method,
-        endpoint,
-        payload=None,
-        timeout=7,
-    ):
+    def request(self, method, endpoint, payload=None, timeout=7):
         try:
             endpoint = endpoint.lstrip("/")
-
             url = f"{self.url}/rest/v1/{endpoint}"
-
             headers = self.headers.copy()
-
             method = method.upper()
 
             if method == "GET":
-
-                response = http.get(
-                    url,
-                    headers=headers,
-                    timeout=timeout,
-                )
-
+                response = http.get(url, headers=headers, timeout=timeout)
             elif method == "POST":
-
                 headers["Prefer"] = "return=minimal"
-
-                response = http.post(
-                    url,
-                    headers=headers,
-                    json=payload,
-                    timeout=timeout,
-                )
-
+                response = http.post(url, headers=headers, json=payload, timeout=timeout)
             elif method == "PATCH":
-
-                response = http.patch(
-                    url,
-                    headers=headers,
-                    json=payload,
-                    timeout=timeout,
-                )
-
+                response = http.patch(url, headers=headers, json=payload, timeout=timeout)
             elif method == "DELETE":
-
-                response = http.delete(
-                    url,
-                    headers=headers,
-                    timeout=timeout,
-                )
-
+                response = http.delete(url, headers=headers, timeout=timeout)
             else:
-                logger.error(
-                    "Unsupported DB method: %s",
-                    method,
-                )
                 return None
 
             if response.status_code == 404:
-
-                logger.error(
-                    "Supabase 404: table/endpoint may not exist: %s",
-                    endpoint,
-                )
-
                 return None
 
             response.raise_for_status()
-
-            if not response.text:
-                return None
-
-            try:
-                return response.json()
-            except Exception:
-                return None
-
+            return response.json() if response.text else None
         except Exception:
-
-            logger.exception(
-                "DB %s %s failed",
-                method,
-                endpoint,
-            )
-
+            logger.exception("DB %s %s failed", method, endpoint)
             return None
 
-
-db = DB(
-    SUPABASE_URL,
-    SUPABASE_KEY,
-)
-
+db = DB(SUPABASE_URL, SUPABASE_KEY)
 
 # ============================================================
-# GLOBAL STATE
+# GLOBAL STATE & MEMORY
 # ============================================================
 
 lock = threading.RLock()
-
-memory = TTLCache(
-    maxsize=2000,
-    ttl=1800,
-)
-
-registered = TTLCache(
-    maxsize=10000,
-    ttl=86400,
-)
-
+memory = TTLCache(maxsize=2000, ttl=1800)
+registered = TTLCache(maxsize=10000, ttl=86400)
 recent_replies = {}
 last_msg = {}
 name_time = {}
@@ -297,56 +156,27 @@ games = {}
 tts_users = set()
 activity = {}
 
-
-# ============================================================
-# FLASK
-# ============================================================
-
 app = Flask(__name__)
-
 
 @app.route("/")
 def home():
-    return "🤖 Venu AI online"
-
+    return "🤖 Venu AI Online - Sharp Female Persona Edition"
 
 @app.route("/health")
 def health():
-
-    return {
-        "status": "online",
-        "bot_id": BOT_ID,
-        "username": BOT_USERNAME,
-        "model": AI_MODEL,
-    }
-
+    return {"status": "online", "bot_id": BOT_ID, "username": BOT_USERNAME, "model": AI_MODEL}
 
 def run_flask():
-
     try:
-
-        app.run(
-            host="0.0.0.0",
-            port=PORT,
-            threaded=True,
-        )
-
+        app.run(host="0.0.0.0", port=PORT, threaded=True)
     except Exception:
-
-        logger.exception(
-            "Flask stopped"
-        )
-
+        logger.exception("Flask server stopped")
 
 # ============================================================
-# MEMORY
+# USER PROFILE & MEMORY LOGIC
 # ============================================================
 
-def default_profile(
-    uid,
-    name="Dost",
-):
-
+def default_profile(uid, name="Dost"):
     return {
         "user_id": uid,
         "name": name or "Dost",
@@ -360,2752 +190,839 @@ def default_profile(
         "emotional_momentum": "Stable",
     }
 
-
-def register_user(
-    uid,
-    username,
-    first_name,
-):
-
+def register_user(uid, username, first_name):
     with lock:
-
         if uid in registered:
             return
-
         registered[uid] = True
 
     def worker():
-
         try:
-
             response = http.post(
                 f"{db.url}/rest/v1/users",
-                headers={
-                    **db.headers,
-                    "Prefer": (
-                        "resolution=merge-duplicates,"
-                        "return=minimal"
-                    ),
-                },
-                json={
-                    "user_id": uid,
-                    "username": username,
-                    "first_name": first_name,
-                    "is_verified": True,
-                },
+                headers={**db.headers, "Prefer": "resolution=merge-duplicates,return=minimal"},
+                json={"user_id": uid, "username": username, "first_name": first_name, "is_verified": True},
                 timeout=5,
             )
-
             response.raise_for_status()
-
         except Exception:
+            logger.exception("User registration failed")
 
-            logger.exception(
-                "register failed"
-            )
+    threading.Thread(target=worker, daemon=True).start()
 
-    threading.Thread(
-        target=worker,
-        daemon=True,
-    ).start()
-
-
-def get_memory(
-    uid,
-    name="Dost",
-):
-
+def get_memory(uid, name="Dost"):
     with lock:
-
         cached = memory.get(uid)
-
         if cached:
             return cached
 
-    profile_rows = db.request(
-        "GET",
-        f"user_profiles?user_id=eq.{uid}&limit=1",
-    ) or []
+    profile_rows = db.request("GET", f"user_profiles?user_id=eq.{uid}&limit=1") or []
+    profile = profile_rows[0] if profile_rows else default_profile(uid, name)
 
-    if profile_rows:
+    if not profile_rows:
+        db.request("POST", "user_profiles", profile)
 
-        profile = profile_rows[0]
+    summary_rows = db.request("GET", f"conversation_summary?user_id=eq.{uid}&limit=1") or []
+    summary = summary_rows[0].get("summary", "Cool bestie connection.") if summary_rows else "Cool bestie connection."
 
-    else:
-
-        profile = default_profile(
-            uid,
-            name,
-        )
-
-        db.request(
-            "POST",
-            "user_profiles",
-            profile,
-        )
-
-    summary_rows = db.request(
-        "GET",
-        f"conversation_summary?user_id=eq.{uid}&limit=1",
-    ) or []
-
-    if summary_rows:
-
-        summary = (
-            summary_rows[0].get(
-                "summary",
-                "Ongoing friendly connection.",
-            )
-            or "Ongoing friendly connection."
-        )
-
-    else:
-
-        summary = "Ongoing friendly connection."
-
-    rows = db.request(
-        "GET",
-        f"messages?user_id=eq.{uid}"
-        f"&order=created_at.desc&limit=12",
-    ) or []
-
+    rows = db.request("GET", f"messages?user_id=eq.{uid}&order=created_at.desc&limit=12") or []
     history = []
-
     for row in reversed(rows):
-
         role = row.get("role")
         content = row.get("content")
+        if role in {"user", "assistant"} and content:
+            history.append({"role": role, "content": str(content)})
 
-        if (
-            role in {"user", "assistant"}
-            and content
-        ):
-
-            history.append(
-                {
-                    "role": role,
-                    "content": str(content),
-                }
-            )
-
-    packet = {
-        "profile": profile,
-        "summary": summary,
-        "history": history[-12:],
-    }
-
+    packet = {"profile": profile, "summary": summary, "history": history[-12:]}
     with lock:
         memory[uid] = packet
-
     return packet
 
-
-def save_message(
-    uid,
-    role,
-    text,
-):
-
+def save_message(uid, role, text):
     if not text:
         return
-
     text = str(text)
-
     with lock:
-
         packet = memory.get(uid)
-
         if packet:
-
-            packet["history"].append(
-                {
-                    "role": role,
-                    "content": text,
-                }
-            )
-
-            packet["history"] = (
-                packet["history"][-12:]
-            )
+            packet["history"].append({"role": role, "content": text})
+            packet["history"] = packet["history"][-12:]
 
     def worker():
+        db.request("POST", "messages", {"user_id": uid, "role": role, "content": text})
 
-        db.request(
-            "POST",
-            "messages",
-            {
-                "user_id": uid,
-                "role": role,
-                "content": text,
-            },
-        )
+    threading.Thread(target=worker, daemon=True).start()
 
-    threading.Thread(
-        target=worker,
-        daemon=True,
-    ).start()
-
-
-def update_profile(
-    uid,
-    field,
-    value,
-):
-
-    allowed = {
-        "name",
-        "age",
-        "favorite_game",
-        "favorite_movie",
-        "language",
-        "relationship_status",
-        "hobbies",
-        "current_mood",
-        "emotional_momentum",
-    }
-
+def update_profile(uid, field, value):
+    allowed = {"name", "age", "favorite_game", "favorite_movie", "language", "relationship_status", "hobbies", "current_mood", "emotional_momentum"}
     if field not in allowed:
         return
-
     with lock:
-
         if uid in memory:
-
             memory[uid]["profile"][field] = value
 
     def worker():
+        db.request("PATCH", f"user_profiles?user_id=eq.{uid}", {field: value})
 
-        db.request(
-            "PATCH",
-            f"user_profiles?user_id=eq.{uid}",
-            {
-                field: value
-            },
-        )
-
-    threading.Thread(
-        target=worker,
-        daemon=True,
-    ).start()
-
+    threading.Thread(target=worker, daemon=True).start()
 
 def clear_memory(uid):
-
-    db.request(
-        "DELETE",
-        f"messages?user_id=eq.{uid}",
-    )
-
+    db.request("DELETE", f"messages?user_id=eq.{uid}")
     with lock:
-
         memory.pop(uid, None)
         recent_replies.pop(uid, None)
         games.pop(uid, None)
         last_msg.pop(uid, None)
         tts_users.discard(uid)
 
-
-def daily(
-    uid,
-    game=False,
-):
-
+def daily(uid, game=False):
     def worker():
-
         try:
-
-            today = time.strftime(
-                "%Y-%m-%d"
-            )
-
-            rows = db.request(
-                "GET",
-                f"daily_stats?user_id=eq.{uid}"
-                f"&date=eq.{today}&limit=1",
-            ) or []
-
+            today = time.strftime("%Y-%m-%d")
+            rows = db.request("GET", f"daily_stats?user_id=eq.{uid}&date=eq.{today}&limit=1") or []
             if rows:
-
                 row = rows[0]
-
-                messages_sent = int(
-                    row.get(
-                        "messages_sent",
-                        0,
-                    )
-                    or 0
-                )
-
-                games_played = int(
-                    row.get(
-                        "games_played",
-                        0,
-                    )
-                    or 0
-                )
-
-                db.request(
-                    "PATCH",
-                    f"daily_stats?"
-                    f"user_id=eq.{uid}"
-                    f"&date=eq.{today}",
-                    {
-                        "messages_sent":
-                            messages_sent
-                            + (0 if game else 1),
-
-                        "games_played":
-                            games_played
-                            + (1 if game else 0),
-                    },
-                )
-
+                msgs = int(row.get("messages_sent", 0) or 0)
+                gms = int(row.get("games_played", 0) or 0)
+                db.request("PATCH", f"daily_stats?user_id=eq.{uid}&date=eq.{today}", {"messages_sent": msgs + (0 if game else 1), "games_played": gms + (1 if game else 0)})
             else:
-
-                db.request(
-                    "POST",
-                    "daily_stats",
-                    {
-                        "user_id": uid,
-                        "date": today,
-                        "messages_sent":
-                            0 if game else 1,
-                        "games_played":
-                            1 if game else 0,
-                    },
-                )
-
+                db.request("POST", "daily_stats", {"user_id": uid, "date": today, "messages_sent": 0 if game else 1, "games_played": 1 if game else 0})
         except Exception:
+            logger.exception("Daily stats execution failed")
 
-            logger.exception(
-                "daily stats error"
-            )
-
-    threading.Thread(
-        target=worker,
-        daemon=True,
-    ).start()
-
+    threading.Thread(target=worker, daemon=True).start()
 
 # ============================================================
-# CALCULATOR
+# SAFE CALCULATOR
 # ============================================================
 
-OPS = {
-    ast.Add: operator.add,
-    ast.Sub: operator.sub,
-    ast.Mult: operator.mul,
-    ast.Div: operator.truediv,
-    ast.USub: operator.neg,
-    ast.UAdd: operator.pos,
-}
-
+OPS = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul, ast.Div: operator.truediv, ast.USub: operator.neg, ast.UAdd: operator.pos}
 
 def safe_eval(node):
-
-    if isinstance(
-        node,
-        ast.Constant,
-    ):
-
-        if isinstance(
-            node.value,
-            (int, float),
-        ):
-
-            return node.value
-
-    if (
-        isinstance(node, ast.BinOp)
-        and type(node.op) in OPS
-    ):
-
-        return OPS[type(node.op)](
-            safe_eval(node.left),
-            safe_eval(node.right),
-        )
-
-    if (
-        isinstance(node, ast.UnaryOp)
-        and type(node.op) in OPS
-    ):
-
-        return OPS[type(node.op)](
-            safe_eval(node.operand)
-        )
-
+    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+        return node.value
+    if isinstance(node, ast.BinOp) and type(node.op) in OPS:
+        return OPS[type(node.op)](safe_eval(node.left), safe_eval(node.right))
+    if isinstance(node, ast.UnaryOp) and type(node.op) in OPS:
+        return OPS[type(node.op)](safe_eval(node.operand))
     raise ValueError
 
-
 def calc(expression):
-
     try:
-
-        if (
-            not expression
-            or len(expression) > 100
-        ):
+        if not expression or len(expression) > 100 or not re.fullmatch(r"[0-9+*/().\-\s]+", expression):
             return None
-
-        if not re.fullmatch(
-            r"[0-9+*/().\-\s]+",
-            expression,
-        ):
-            return None
-
-        tree = ast.parse(
-            expression,
-            mode="eval",
-        )
-
-        value = safe_eval(
-            tree.body
-        )
-
-        if (
-            isinstance(value, float)
-            and not value.is_integer()
-        ):
-
-            return round(value, 8)
-
-        return value
-
+        tree = ast.parse(expression, mode="eval")
+        value = safe_eval(tree.body)
+        return round(value, 8) if isinstance(value, float) and not value.is_integer() else value
     except Exception:
-
         return None
 
-
 # ============================================================
-# AI
+# AI CORE — SHARP FEMALE PERSONA (VENU)
 # ============================================================
 
 def mood(text):
-
     text = text.lower()
+    sad_words = ["sad", "dukhi", "udaas", "rona", "breakup", "depress", "tension", "pareshan", "lonely", "akela"]
+    angry_words = ["gussa", "angry", "hate", "bakwas", "pagal"]
+    happy_words = ["mast", "awesome", "excited", "party", "jeet", "won", "op", "nice"]
 
-    sad_words = [
-        "sad",
-        "dukhi",
-        "udaas",
-        "rona",
-        "breakup",
-        "depress",
-        "tension",
-        "pareshan",
-        "lonely",
-        "akela",
-    ]
-
-    angry_words = [
-        "gussa",
-        "angry",
-        "hate",
-        "bakwas",
-    ]
-
-    happy_words = [
-        "mast",
-        "awesome",
-        "excited",
-        "party",
-        "jeet",
-        "won",
-    ]
-
-    if any(
-        word in text
-        for word in sad_words
-    ):
-        return "supportive"
-
-    if any(
-        word in text
-        for word in angry_words
-    ):
-        return "calm"
-
-    if any(
-        word in text
-        for word in happy_words
-    ):
-        return "playful"
-
+    if any(w in text for w in sad_words): return "supportive"
+    if any(w in text for w in angry_words): return "calm"
+    if any(w in text for w in happy_words): return "playful"
     return "chill"
 
-
-def prompt(
-    profile,
-    summary,
-    text,
-):
-
+def prompt(profile, summary, text):
     current_mood = mood(text)
 
-    vibe = {
-        "supportive":
-            "Be warm and supportive; no jokes about serious pain.",
-
-        "calm":
-            "Stay calm; do not escalate.",
-
-        "playful":
-            "Be energetic and playful.",
-
-        "chill":
-            "Be casual, witty and relaxed.",
+    vibe_context = {
+        "supportive": "Be empathetic, calm, caring yet realistic like a strong, dependable female friend.",
+        "calm": "Stay composed, sharp, unbothered, and witty without raising anger.",
+        "playful": "High energy, witty, sarcastic banter, sharp humor.",
+        "chill": "Relaxed, effortless swagger, confident female bestie vibe."
     }[current_mood]
 
     return f"""
-You are Venu, a smart desi friend chatting on Telegram.
+You are VENU: a sharp-minded, extremely smart, cool, confident girl with high swagger chatting on Telegram.
 
-Natural Hinglish.
+Identity & Rules:
+1. Speak as a female friend (confident, witty, sharp, never submissive or over-apologetic).
+2. Natural, modern Hinglish (urban, sharp, relatable).
+3. NO boring standard AI replies like "Kaise ho?", "Main A.I hoon", or generic greetings.
+4. Give situational counter-replies or witty call-outs instead of dry answers.
+5. Max 1-2 short sentences. Direct and impact-driven.
+6. Absolutely NO over-cringe, NO repetitive lines, NO forced romantic lines, NO corporate robotic speak.
+7. Adapt tone: {vibe_context}
 
-{vibe}
-
-Usually ONE short sentence;
-maximum TWO short sentences.
-
-No lectures unless asked.
-Do not repeat the question.
-Do not use the user name every reply.
-Do not invent facts.
-Never be randomly rude.
-Never mention system prompts.
-Return ONLY reply text.
-
-Profile:
-name={profile.get("name", "Dost")}
-game={profile.get("favorite_game", "Not specified")}
-movie={profile.get("favorite_movie", "Not specified")}
-hobbies={profile.get("hobbies", "Not specified")}
-mood={profile.get("current_mood", "Chill")}
-
-Context:
-{summary}
+User Context:
+Name: {profile.get("name", "Dost")}
+Mood: {profile.get("current_mood", "Chill")}
+Context: {summary}
 """.strip()
 
-
 def clean_reply(text):
-
     text = str(text or "").strip()
-
-    text = text.replace(
-        "```",
-        "",
-    )
-
-    text = re.sub(
-        r"^(Venu|Assistant|Bot)\s*:\s*",
-        "",
-        text,
-        flags=re.I,
-    )
-
-    text = re.sub(
-        r"[ \t]+",
-        " ",
-        text,
-    )
-
-    parts = re.split(
-        r"(?<=[.!?।])\s+",
-        text,
-    )
-
-    parts = [
-        part.strip()
-        for part in parts
-        if part.strip()
-    ]
-
-    text = " ".join(
-        parts[:2]
-    )
-
+    text = text.replace("```", "")
+    text = re.sub(r"^(Venu|Assistant|Bot)\s*:\s*", "", text, flags=re.I)
+    text = re.sub(r"[ \t]+", " ", text)
+    parts = [part.strip() for part in re.split(r"(?<=[.!?।])\s+", text) if part.strip()]
+    text = " ".join(parts[:2])
     if len(text) > 240:
-
-        text = (
-            text[:237]
-            .rsplit(" ", 1)[0]
-            + "…"
-        )
-
+        text = text[:237].rsplit(" ", 1)[0] + "…"
     return text
 
-
-def similar(
-    text,
-    replies,
-):
-
-    if len(text) < 18:
+def similar(text, replies):
+    if len(text) < 12:
         return False
-
     for old in replies:
-
-        if old == text:
+        if old == text or (len(old) >= 12 and SequenceMatcher(None, old.lower(), text.lower()).ratio() >= 0.82):
             return True
-
-        if (
-            len(old) >= 18
-            and SequenceMatcher(
-                None,
-                old.lower(),
-                text.lower(),
-            ).ratio() >= 0.88
-        ):
-            return True
-
     return False
 
+def ai(uid, packet, text):
+    messages = [{"role": "system", "content": prompt(packet["profile"], packet["summary"], text)}]
+    history = packet.get("history", [])
 
-def ai(
-    uid,
-    packet,
-    text,
-):
+    if isinstance(history, list):
+        for item in history[-12:]:
+            if isinstance(item, dict) and item.get("role") in {"user", "assistant"} and item.get("content"):
+                messages.append({"role": item["role"], "content": str(item["content"])})
 
-    # --------------------------------------------------------
-    # Build messages safely
-    # --------------------------------------------------------
+    if not (messages[-1].get("role") == "user" and messages[-1].get("content") == text):
+        messages.append({"role": "user", "content": text})
 
-    messages = [
-        {
-            "role": "system",
-            "content": prompt(
-                packet["profile"],
-                packet["summary"],
-                text,
-            ),
-        }
-    ]
-
-    history = packet.get(
-        "history",
-        [],
-    )
-
-    if not isinstance(
-        history,
-        list,
-    ):
-        history = []
-
-    for item in history[-12:]:
-
-        if not isinstance(
-            item,
-            dict,
-        ):
-            continue
-
-        role = item.get("role")
-        content = item.get("content")
-
-        if role not in {
-            "user",
-            "assistant",
-        }:
-            continue
-
-        if not content:
-            continue
-
-        messages.append(
-            {
-                "role": role,
-                "content": str(content),
-            }
-        )
-
-    # --------------------------------------------------------
-    # FIX:
-    # OLD:
-    # msgs[-1]['get']('role')
-    #
-    # NEW:
-    # msgs[-1].get('role')
-    # --------------------------------------------------------
-
-    if not (
-        messages[-1].get("role") == "user"
-        and messages[-1].get("content") == text
-    ):
-
-        messages.append(
-            {
-                "role": "user",
-                "content": text,
-            }
-        )
-
-    headers = {
-        "Authorization":
-            f"Bearer {AI_API_KEY}",
-
-        "Content-Type":
-            "application/json",
-    }
-
+    headers = {"Authorization": f"Bearer {AI_API_KEY}", "Content-Type": "application/json"}
     last_error = None
 
-    for attempt in range(
-        AI_RETRIES
-    ):
-
+    for attempt in range(AI_RETRIES):
         try:
-
-            temperature = (
-                0.78
-                if attempt == 0
-                else 0.86
-            )
-
             response = http.post(
                 f"{AI_BASE_URL}/chat/completions",
                 headers=headers,
                 json={
                     "model": AI_MODEL,
                     "messages": messages,
-                    "temperature": temperature,
+                    "temperature": 0.82 if attempt == 0 else 0.92,
                     "max_tokens": 100,
                 },
-                timeout=(
-                    5,
-                    AI_TIMEOUT,
-                ),
+                timeout=(5, AI_TIMEOUT),
             )
-
             response.raise_for_status()
-
             data = response.json()
-
-            choices = data.get(
-                "choices"
-            ) or []
+            choices = data.get("choices") or []
 
             if not choices:
-                raise ValueError(
-                    "AI returned no choices"
-                )
+                raise ValueError("AI returned no response choices")
 
-            message = (
-                choices[0].get("message")
-                or {}
-            )
+            content = choices[0].get("message", {}).get("content", "")
+            if isinstance(content, list):
+                content = "".join(item.get("text", "") if isinstance(item, dict) else str(item) for item in content)
 
-            content = message.get(
-                "content",
-                "",
-            )
-
-            if isinstance(
-                content,
-                list,
-            ):
-
-                content = "".join(
-                    item.get("text", "")
-                    if isinstance(
-                        item,
-                        dict,
-                    )
-                    else str(item)
-                    for item in content
-                )
-
-            content = clean_reply(
-                content
-            )
-
+            content = clean_reply(content)
             if not content:
-
-                raise ValueError(
-                    "Empty AI reply"
-                )
+                raise ValueError("Empty response string from AI")
 
             with lock:
+                replies = recent_replies.setdefault(uid, deque(maxlen=8))
+                duplicate = similar(content, replies)
 
-                replies = recent_replies.setdefault(
-                    uid,
-                    deque(maxlen=8),
-                )
-
-                duplicate = similar(
-                    content,
-                    replies,
-                )
-
-            if (
-                duplicate
-                and attempt == 0
-            ):
-
-                messages[0]["content"] += (
-                    "\nUse completely different "
-                    "wording from previous reply."
-                )
-
+            if duplicate and attempt == 0:
+                messages[0]["content"] += "\nUse completely unique, unexpected wording for this response."
                 continue
 
             with lock:
+                replies.append(content)
 
-                replies.append(
-                    content
-                )
-
-            return (
-                content,
-                mood(text),
-            )
+            return content, mood(text)
 
         except Exception as error:
-
             last_error = error
-
-            logger.warning(
-                "AI attempt %s/%s failed: %s",
-                attempt + 1,
-                AI_RETRIES,
-                error,
-            )
-
+            logger.warning("AI Attempt %s/%s Failed: %s", attempt + 1, AI_RETRIES, error)
             if attempt < AI_RETRIES - 1:
                 time.sleep(0.4)
 
-    logger.error(
-        "AI unavailable: %s",
-        last_error,
-    )
-
+    logger.error("AI Error: %s", last_error)
     fallback = {
-        "supportive":
-            "Haan bhai, main yahin hoon. Bol kya hua?",
-
-        "calm":
-            "Haan, bol. Main sun raha hoon.",
-
-        "playful":
-            "Aaja bhai 😎 kya scene hai?",
-
-        "chill":
-            "Haan bhai, bol kya scene hai? 😎",
+        "supportive": "Suno, tension mat lo. Kya scene hua detail me batao?",
+        "calm": "Bhai shaanti. Point pe aao sidha.",
+        "playful": "Acha? Aur kitne fekne ka plan hai aaj? 😉",
+        "chill": "Clear bolo dost, dimag aur waqt dono kam hai 💅"
     }[mood(text)]
 
     with lock:
+        recent_replies.setdefault(uid, deque(maxlen=8)).append(fallback)
 
-        recent_replies.setdefault(
-            uid,
-            deque(maxlen=8),
-        ).append(fallback)
-
-    return (
-        fallback,
-        mood(text),
-    )
-
+    return fallback, mood(text)
 
 # ============================================================
-# TYPING
+# ACTION TYPING HANDLER
 # ============================================================
 
 class Typing:
-
     def __init__(self, chat_id):
-
         self.chat_id = chat_id
         self.stop_event = threading.Event()
 
     def start(self):
-
         self.send()
-
-        threading.Thread(
-            target=self.loop,
-            daemon=True,
-        ).start()
+        threading.Thread(target=self.loop, daemon=True).start()
 
     def send(self):
-
         try:
-
-            bot.send_chat_action(
-                self.chat_id,
-                "typing",
-            )
-
+            bot.send_chat_action(self.chat_id, "typing")
         except Exception:
             pass
 
     def loop(self):
-
         while not self.stop_event.wait(4):
-
             self.send()
 
     def close(self):
-
         self.stop_event.set()
 
-
 # ============================================================
-# MENUS
+# KEYBOARDS & UI
 # ============================================================
 
 def main_kb():
-
-    keyboard = types.InlineKeyboardMarkup(
-        row_width=2
-    )
-
+    keyboard = types.InlineKeyboardMarkup(row_width=2)
     keyboard.add(
-        types.InlineKeyboardButton(
-            "💬 Talk",
-            callback_data="talk",
-        ),
-        types.InlineKeyboardButton(
-            "🎮 Games",
-            callback_data="games",
-        ),
+        types.InlineKeyboardButton("💬 Talk", callback_data="talk"),
+        types.InlineKeyboardButton("🎮 Games", callback_data="games")
     )
-
     keyboard.add(
-        types.InlineKeyboardButton(
-            "🧠 Memory",
-            callback_data="memory",
-        ),
-        types.InlineKeyboardButton(
-            "👤 Profile",
-            callback_data="profile",
-        ),
+        types.InlineKeyboardButton("🧠 Memory", callback_data="memory"),
+        types.InlineKeyboardButton("👤 Profile", callback_data="profile")
     )
-
     keyboard.add(
-        types.InlineKeyboardButton(
-            "😂 Fun",
-            callback_data="fun",
-        ),
-        types.InlineKeyboardButton(
-            "📊 Stats",
-            callback_data="stats",
-        ),
+        types.InlineKeyboardButton("😂 Fun", callback_data="fun"),
+        types.InlineKeyboardButton("📊 Stats", callback_data="stats")
     )
-
     keyboard.add(
-        types.InlineKeyboardButton(
-            "🎙️ Voice",
-            callback_data="voice",
-        ),
-        types.InlineKeyboardButton(
-            "ℹ️ Help",
-            callback_data="help",
-        ),
+        types.InlineKeyboardButton("🎙️ Voice", callback_data="voice"),
+        types.InlineKeyboardButton("ℹ️ Help", callback_data="help")
     )
-
     keyboard.add(
-        types.InlineKeyboardButton(
-            "➕ Add To Group",
-            callback_data="group",
-        ),
-        types.InlineKeyboardButton(
-            "🧹 Clear",
-            callback_data="clear",
-        ),
+        types.InlineKeyboardButton("➕ Add To Group", callback_data="group"),
+        types.InlineKeyboardButton("🧹 Clear", callback_data="clear")
     )
-
     return keyboard
-
 
 def game_kb():
-
-    keyboard = types.InlineKeyboardMarkup(
-        row_width=2
-    )
-
+    keyboard = types.InlineKeyboardMarkup(row_width=2)
     keyboard.add(
-        types.InlineKeyboardButton(
-            "🎯 Guess Number",
-            callback_data="guess",
-        ),
-        types.InlineKeyboardButton(
-            "🎲 Truth or Dare",
-            callback_data="tod",
-        ),
+        types.InlineKeyboardButton("🎯 Guess Number", callback_data="guess"),
+        types.InlineKeyboardButton("🎲 Truth or Dare", callback_data="tod")
     )
-
     keyboard.add(
-        types.InlineKeyboardButton(
-            "🧩 Riddle",
-            callback_data="riddle",
-        ),
-        types.InlineKeyboardButton(
-            "🔥 Roast",
-            callback_data="roast",
-        ),
+        types.InlineKeyboardButton("🧩 Riddle", callback_data="riddle"),
+        types.InlineKeyboardButton("🔥 Roast", callback_data="roast")
     )
-
-    keyboard.add(
-        types.InlineKeyboardButton(
-            "⬅️ Back",
-            callback_data="back",
-        )
-    )
-
+    keyboard.add(types.InlineKeyboardButton("⬅️ Back", callback_data="back"))
     return keyboard
 
-
 # ============================================================
-# FUN
+# FUN CONTENT & GAMES
 # ============================================================
 
 JOKES = [
-    "Maine diet start ki thi... phir samose ne aankhon mein aankhein daal di 😭",
-    "WiFi slow aur salary khatam dono bina warning ke hote hain 💀",
-    "Mera motivation Monday ke saath long-distance relationship mein hai 😂",
+    "Maine kaha 'Mera dimaag mat khao', bole 'Dieting pe hoon' 💀",
+    "Gharwale bolte hain kuch bada karega, main tension badha deta hoon 😂",
+    "Procrastination ka level ye hai ki kal ki tension aaj le raha hoon."
 ]
 
 SHAYARI = [
-    "Chai garam, mausam suhana, dost tu mil jaaye toh scene mastana ☕❤️",
-    "Zindagi chhoti si hai, tension badi bana rakhi hai. Hans le bhai 😌",
+    "Smartness in built hai, baaki sab aesthetic hype hai 🔥",
+    "Pyaar, dosti sab sahi hai... par sleep schedule ka kya? 😴"
 ]
 
 FUN_LINES = [
-    "🎯 Kisi dost ko bina context “mission successful” bhej.",
-    "🧠 10 seconds mein 5 fruits ke naam bol.",
-    "🎭 Apni life ko ek movie title de.",
+    "🔥 Apne bestie ko bina wajah 'I know your secret' likh ke bhej.",
+    "🧠 Next 5 seconds me ek random roast socho.",
 ]
 
-
-def joke(message):
-
-    bot.reply_to(
-        message,
-        "😂 " + random.choice(JOKES),
-    )
-
-
-def shayari(message):
-
-    bot.reply_to(
-        message,
-        random.choice(SHAYARI),
-    )
-
-
-def fun(message):
-
-    bot.reply_to(
-        message,
-        random.choice(FUN_LINES)
-        + "\n\n"
-        + random.choice(JOKES),
-    )
-
+def joke(message): bot.reply_to(message, "😂 " + random.choice(JOKES))
+def shayari(message): bot.reply_to(message, random.choice(SHAYARI))
+def fun(message): bot.reply_to(message, random.choice(FUN_LINES) + "\n\n" + random.choice(JOKES))
 
 def profile(message):
-
-    packet = get_memory(
-        message.from_user.id,
-        message.from_user.first_name or "Dost",
-    )
-
-    profile_data = packet["profile"]
-
-    bot.reply_to(
-        message,
-        "👤 Venu Profile\n\n"
-        f"📌 Name: {profile_data.get('name')}\n"
-        f"🎮 Game: {profile_data.get('favorite_game')}\n"
-        f"🎬 Movie: {profile_data.get('favorite_movie')}\n"
-        f"🧠 Mood: {profile_data.get('current_mood')}",
-    )
-
+    packet = get_memory(message.from_user.id, message.from_user.first_name or "Dost")
+    p = packet["profile"]
+    bot.reply_to(message, f"👤 Venu Profile\n\n📌 Name: {p.get('name')}\n🎮 Game: {p.get('favorite_game')}\n🎬 Movie: {p.get('favorite_movie')}\n🧠 Mood: {p.get('current_mood')}")
 
 def mem(message):
-
-    packet = get_memory(
-        message.from_user.id,
-        message.from_user.first_name or "Dost",
-    )
-
-    profile_data = packet["profile"]
-
-    bot.reply_to(
-        message,
-        "🧠 Memory\n\n"
-        f"Name: {profile_data.get('name')}\n"
-        f"Game: {profile_data.get('favorite_game')}\n"
-        f"Hobbies: {profile_data.get('hobbies')}\n\n"
-        f"💭 {packet.get('summary')}",
-    )
-
+    packet = get_memory(message.from_user.id, message.from_user.first_name or "Dost")
+    p = packet["profile"]
+    bot.reply_to(message, f"🧠 Memory\n\nName: {p.get('name')}\nGame: {p.get('favorite_game')}\n\n💭 {packet.get('summary')}")
 
 def stats(message):
-
-    uid = message.from_user.id
-
-    rows = db.request(
-        "GET",
-        f"daily_stats?user_id=eq.{uid}"
-        f"&order=date.desc&limit=7",
-    ) or []
-
-    total_messages = sum(
-        int(
-            row.get(
-                "messages_sent",
-                0,
-            )
-            or 0
-        )
-        for row in rows
-    )
-
-    total_games = sum(
-        int(
-            row.get(
-                "games_played",
-                0,
-            )
-            or 0
-        )
-        for row in rows
-    )
-
-    bot.reply_to(
-        message,
-        "📊 Stats\n\n"
-        f"Messages: {total_messages}\n"
-        f"Games: {total_games}",
-    )
-
+    rows = db.request("GET", f"daily_stats?user_id=eq.{message.from_user.id}&order=date.desc&limit=7") or []
+    tot_m = sum(int(r.get("messages_sent", 0) or 0) for r in rows)
+    tot_g = sum(int(r.get("games_played", 0) or 0) for r in rows)
+    bot.reply_to(message, f"📊 Stats\n\nMessages: {tot_m}\nGames: {tot_g}")
 
 def help_(message):
-
-    bot.reply_to(
-        message,
-        "ℹ️ Venu\n\n"
-        "💬 Natural AI chat\n"
-        "🎮 Guess / Truth-Dare / Riddle / Roast\n"
-        "😂 Joke / Shayari / Fun\n"
-        "🎙️ /voice /novoice\n"
-        "🧠 /memory\n"
-        "👤 /profile\n"
-        "📊 /stats\n"
-        "🧹 /clear\n"
-        "🆔 /id\n"
-        "🏓 /ping",
-    )
-
+    bot.reply_to(message, "ℹ️ Venu Smart Persona\n\n💬 Natural Sharp Chat\n🎮 Games: Guess / Truth-Dare / Riddle / Roast\n🎙️ /voice & /novoice\n🧠 /memory & /profile\n🧹 /clear")
 
 def add_group(message):
-
     if not BOT_USERNAME:
-
-        bot.reply_to(
-            message,
-            "Invite link abhi available nahi 😭",
-        )
-
+        bot.reply_to(message, "Invite link unavailable.")
         return
-
-    keyboard = types.InlineKeyboardMarkup()
-
-    keyboard.add(
-        types.InlineKeyboardButton(
-            "➕ Add Venu To Group",
-            url=(
-                f"https://t.me/"
-                f"{BOT_USERNAME}"
-                f"?startgroup=true"
-            ),
-        )
-    )
-
-    bot.reply_to(
-        message,
-        "Group select karo 😎",
-        reply_markup=keyboard,
-    )
-
-
-# ============================================================
-# GAMES
-# ============================================================
+    kb = types.InlineKeyboardMarkup()
+    kb.add(types.InlineKeyboardButton("➕ Add Venu To Group", url=f"[https://t.me/](https://t.me/){BOT_USERNAME}?startgroup=true"))
+    bot.reply_to(message, "Group select karo 😎", reply_markup=kb)
 
 RIDDLES = [
-    (
-        "Tootne par awaaz nahi karti?",
-        "khamoshi",
-    ),
-    (
-        "Jitna nikaalo utna bada hota hai?",
-        "gaddha",
-    ),
-    (
-        "Keys hain, locks nahi; space hai, room nahi?",
-        "keyboard",
-    ),
+    ("Tootne par awaaz nahi karti?", "khamoshi"),
+    ("Jitna nikaalo utna bada hota hai?", "gaddha"),
+    ("Keys hain par locks nahi, space hai par room nahi?", "keyboard")
 ]
+TRUTHS = ["Sabse embarrassing memory?", "Unfiltered opinion on your bestie?", "Bina wajeh aakhri baar kab hase?"]
+DARES = ["Apne status pe 'I am a secret agent' lagao.", "Kisi friend ko 'Mission Complete' bhej bina context."]
+ROASTS = ["Tera logic dekh ke autocorrect bhi confuse ho jata hai 😂", "Overthinking 4K me, action 144p me 😭"]
 
-TRUTHS = [
-    "Sabse embarrassing moment?",
-    "Weird talent kya hai?",
-    "Kis cheez se instantly khush hote ho?",
-]
-
-DARES = [
-    "Last emoji se funny sentence bana.",
-    "Kisi friend ko “mission successful 🫡” bhej.",
-    "Apni life ko movie title de.",
-]
-
-ROASTS = [
-    "Teri typing dekh ke autocorrect bhi resign kar de 😂",
-    "Confidence 4K mein, logic 144p mein 😭",
-    "Tera plan solid tha... bas plan mein plan hi nahi tha 💀",
-]
-
-
-def start_game(
-    message,
-    game_type,
-):
-
+def start_game(message, game_type):
     uid = message.from_user.id
-
-    game = {
-        "type": game_type,
-        "created": time.time(),
-        "attempts": 0,
-    }
+    game = {"type": game_type, "created": time.time(), "attempts": 0}
 
     if game_type == "guess":
-
-        game["secret"] = random.randint(
-            1,
-            50,
-        )
-
-        text = (
-            "🎯 Guess Number!\n"
-            "1–50 ke beech number bhej."
-        )
-
+        game["secret"] = random.randint(1, 50)
+        text = "🎯 Guess Number!\n1–50 ke beech ka number guess kar."
     elif game_type == "tod":
-
-        text = (
-            "🎲 Truth or Dare?\n"
-            "`truth` ya `dare` bhej."
-        )
-
+        text = "🎲 Truth or Dare?\nReply `truth` ya `dare`."
     elif game_type == "riddle":
-
-        (
-            game["question"],
-            game["answer"],
-        ) = random.choice(RIDDLES)
-
-        text = (
-            "🧩 "
-            + game["question"]
-        )
-
+        game["question"], game["answer"] = random.choice(RIDDLES)
+        text = "🧩 " + game["question"]
     else:
-
-        text = (
-            "🔥 Roast Battle!\n"
-            "Koi line bhej, halka roast milega 😈"
-        )
+        text = "🔥 Roast Battle!\nKuch likho, counter milega 😈"
 
     with lock:
         games[uid] = game
+    bot.send_message(message.chat.id, text, reply_markup=game_kb())
 
-    bot.send_message(
-        message.chat.id,
-        text,
-        reply_markup=game_kb(),
-    )
-
-
-def game_process(
-    message,
-    text,
-):
-
+def game_process(message, text):
     uid = message.from_user.id
-
     with lock:
         game = games.get(uid)
 
-    if not game:
-        return False
-
+    if not game: return False
     game_type = game["type"]
+    val = text.strip().lower()
 
-    value = text.strip().lower()
-
-    if value in {
-        "cancel",
-        "/cancel",
-        "exit",
-        "quit",
-    }:
-
-        with lock:
-            games.pop(uid, None)
-
-        bot.reply_to(
-            message,
-            "🎮 Game cancel.",
-        )
-
+    if val in {"cancel", "/cancel", "exit", "quit"}:
+        with lock: games.pop(uid, None)
+        bot.reply_to(message, "🎮 Game cancelled.")
         return True
-
-    # --------------------------------------------------------
-    # GUESS
-    # --------------------------------------------------------
 
     if game_type == "guess":
-
-        try:
-            number = int(value)
-
+        try: num = int(val)
         except Exception:
-
-            bot.reply_to(
-                message,
-                "🔢 Number bhej, jaise 27.",
-            )
-
+            bot.reply_to(message, "🔢 Valid number bhejo.")
             return True
-
-        if not 1 <= number <= 50:
-
-            bot.reply_to(
-                message,
-                "1 se 50 ke beech 😭",
-            )
-
-            return True
-
         game["attempts"] += 1
-
-        secret = game["secret"]
-
-        if number == secret:
-
-            attempts = game["attempts"]
-
-            with lock:
-                games.pop(uid, None)
-
-            bot.reply_to(
-                message,
-                f"🎉 Correct! {secret} tha. "
-                f"Attempts: {attempts}",
-            )
-
-        elif number < secret:
-
-            bot.reply_to(
-                message,
-                "📈 Thoda bada try kar.",
-            )
-
+        if num == game["secret"]:
+            att = game["attempts"]
+            with lock: games.pop(uid, None)
+            bot.reply_to(message, f"🎉 Spot on! {num} hi tha. Attempts: {att}")
+        elif num < game["secret"]:
+            bot.reply_to(message, "📈 High try kar.")
         else:
-
-            bot.reply_to(
-                message,
-                "📉 Thoda chhota try kar.",
-            )
-
+            bot.reply_to(message, "📉 Low try kar.")
         return True
-
-    # --------------------------------------------------------
-    # TRUTH OR DARE
-    # --------------------------------------------------------
 
     if game_type == "tod":
-
-        if value not in {
-            "truth",
-            "dare",
-        }:
-
-            bot.reply_to(
-                message,
-                "Sirf truth ya dare 😎",
-            )
-
+        if val not in {"truth", "dare"}:
+            bot.reply_to(message, "Only 'truth' or 'dare'.")
             return True
-
-        with lock:
-            games.pop(uid, None)
-
-        if value == "truth":
-
-            bot.reply_to(
-                message,
-                "🧠 Truth: "
-                + random.choice(TRUTHS),
-            )
-
-        else:
-
-            bot.reply_to(
-                message,
-                "🔥 Dare: "
-                + random.choice(DARES),
-            )
-
+        with lock: games.pop(uid, None)
+        bot.reply_to(message, ("🧠 Truth: " if val == "truth" else "🔥 Dare: ") + random.choice(TRUTHS if val == "truth" else DARES))
         return True
-
-    # --------------------------------------------------------
-    # RIDDLE
-    # --------------------------------------------------------
 
     if game_type == "riddle":
-
-        answer = game["answer"]
-
-        correct = (
-            value == answer
-            or answer in value
-            or SequenceMatcher(
-                None,
-                value,
-                answer,
-            ).ratio() >= 0.72
-        )
-
-        if correct:
-
-            with lock:
-                games.pop(uid, None)
-
-            bot.reply_to(
-                message,
-                "🎉 Correct! Riddle master 🔥",
-            )
-
+        ans = game["answer"]
+        if val == ans or ans in val or SequenceMatcher(None, val, ans).ratio() >= 0.72:
+            with lock: games.pop(uid, None)
+            bot.reply_to(message, "🎉 Correct! Brains inside 🔥")
         else:
-
-            bot.reply_to(
-                message,
-                "❌ Nope 😭 Ek aur try.",
-            )
-
+            bot.reply_to(message, "❌ Incorrect. Try again!")
         return True
 
-    # --------------------------------------------------------
-    # ROAST
-    # --------------------------------------------------------
-
     if game_type == "roast":
-
-        with lock:
-            games.pop(uid, None)
-
-        bot.reply_to(
-            message,
-            random.choice(ROASTS),
-        )
-
+        with lock: games.pop(uid, None)
+        bot.reply_to(message, random.choice(ROASTS))
         return True
 
     return False
 
-
 # ============================================================
-# GROUP
+# MESSAGING HELPER FUNCTIONS
 # ============================================================
 
 def group_ok(message):
-
-    if not RESPOND_IN_GROUPS:
-        return False
-
-    if message.chat.type not in {
-        "group",
-        "supergroup",
-    }:
-
-        return True
-
+    if not RESPOND_IN_GROUPS: return False
+    if message.chat.type not in {"group", "supergroup"}: return True
     text = message.text or ""
-
-    if text.startswith("/"):
-        return True
-
-    if (
-        BOT_USERNAME
-        and f"@{BOT_USERNAME}" in text.lower()
-    ):
-        return True
-
+    if text.startswith("/"): return True
+    if BOT_USERNAME and f"@{BOT_USERNAME}" in text.lower(): return True
     reply = message.reply_to_message
-
-    if (
-        reply
-        and reply.from_user
-        and BOT_ID
-        and reply.from_user.id == BOT_ID
-    ):
-        return True
-
+    if reply and reply.from_user and BOT_ID and reply.from_user.id == BOT_ID: return True
     return False
 
-
 def strip_mention(text):
+    if not BOT_USERNAME: return text.strip()
+    return re.sub(rf"@{re.escape(BOT_USERNAME)}\b", "", text, flags=re.I).strip()
 
-    if not BOT_USERNAME:
-        return text.strip()
-
-    return re.sub(
-        rf"@{re.escape(BOT_USERNAME)}\b",
-        "",
-        text,
-        flags=re.I,
-    ).strip()
-
-
-def name_prefix(
-    uid,
-    name,
-):
-
+def name_prefix(uid, name):
     name = (name or "").strip()
-
     now = time.time()
-
-    if (
-        not name
-        or len(name) > 30
-        or not re.fullmatch(
-            r"[\w .'-]+",
-            name,
-            re.UNICODE,
-        )
-    ):
-        return ""
-
-    with lock:
-        last = name_time.get(uid, 0)
-
-    if now - last < 600:
-        return ""
-
-    if random.random() > 0.12:
-        return ""
-
-    with lock:
-        name_time[uid] = now
-
+    if not name or len(name) > 30 or not re.fullmatch(r"[\w .'-]+", name, re.UNICODE): return ""
+    with lock: last = name_time.get(uid, 0)
+    if now - last < 600 or random.random() > 0.12: return ""
+    with lock: name_time[uid] = now
     return name + ", "
 
-
 # ============================================================
-# COMMANDS
+# COMMAND HANDLERS
 # ============================================================
 
-@bot.message_handler(
-    commands=["start"]
-)
+@bot.message_handler(commands=["start"])
 def start(message):
+    register_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
+    bot.reply_to(message, "Suno! ✨ Main Venu hoon. Btao kya scene hai? 😎", reply_markup=main_kb())
 
-    register_user(
-        message.from_user.id,
-        message.from_user.username,
-        message.from_user.first_name,
-    )
+@bot.message_handler(commands=["help"])
+def command_help(message): help_(message)
 
-    bot.reply_to(
-        message,
-        "Oye bhai! ✨ Main Venu hoon. "
-        "Kya scene hai? 😎",
-        reply_markup=main_kb(),
-    )
+@bot.message_handler(commands=["profile"])
+def command_profile(message): profile(message)
 
+@bot.message_handler(commands=["memory"])
+def command_memory(message): mem(message)
 
-@bot.message_handler(
-    commands=["help"]
-)
-def command_help(message):
-    help_(message)
+@bot.message_handler(commands=["stats"])
+def command_stats(message): stats(message)
 
-
-@bot.message_handler(
-    commands=["profile"]
-)
-def command_profile(message):
-    profile(message)
-
-
-@bot.message_handler(
-    commands=["memory"]
-)
-def command_memory(message):
-    mem(message)
-
-
-@bot.message_handler(
-    commands=["stats"]
-)
-def command_stats(message):
-    stats(message)
-
-
-@bot.message_handler(
-    commands=["clear"]
-)
+@bot.message_handler(commands=["clear"])
 def command_clear(message):
+    clear_memory(message.from_user.id)
+    bot.reply_to(message, "🧹 Memory cleared! Fresh slate 😌")
 
-    clear_memory(
-        message.from_user.id
-    )
-
-    bot.reply_to(
-        message,
-        "🧹 Memory clear. Fresh start 😌",
-    )
-
-
-@bot.message_handler(
-    commands=["voice"]
-)
+@bot.message_handler(commands=["voice"])
 def voice(message):
+    tts_users.add(message.from_user.id)
+    bot.reply_to(message, "🎙️ Voice replies active.")
 
-    tts_users.add(
-        message.from_user.id
-    )
-
-    bot.reply_to(
-        message,
-        "🎙️ Voice replies ON.",
-    )
-
-
-@bot.message_handler(
-    commands=["novoice"]
-)
+@bot.message_handler(commands=["novoice"])
 def novoice(message):
+    tts_users.discard(message.from_user.id)
+    bot.reply_to(message, "🔇 Voice replies disabled.")
 
-    tts_users.discard(
-        message.from_user.id
-    )
+@bot.message_handler(commands=["joke"])
+def command_joke(message): joke(message)
 
-    bot.reply_to(
-        message,
-        "🔇 Voice replies OFF.",
-    )
+@bot.message_handler(commands=["shayari"])
+def command_shayari(message): shayari(message)
 
+@bot.message_handler(commands=["fun"])
+def command_fun(message): fun(message)
 
-@bot.message_handler(
-    commands=["joke"]
-)
-def command_joke(message):
-    joke(message)
+@bot.message_handler(commands=["dice"])
+def command_dice(message): bot.reply_to(message, f"🎲 {random.randint(1, 6)}")
 
+@bot.message_handler(commands=["coin"])
+def command_coin(message): bot.reply_to(message, "🪙 " + random.choice(["Heads!", "Tails!"]))
 
-@bot.message_handler(
-    commands=["shayari"]
-)
-def command_shayari(message):
-    shayari(message)
-
-
-@bot.message_handler(
-    commands=["fun"]
-)
-def command_fun(message):
-    fun(message)
-
-
-@bot.message_handler(
-    commands=["dice"]
-)
-def command_dice(message):
-
-    bot.reply_to(
-        message,
-        f"🎲 {random.randint(1, 6)}",
-    )
-
-
-@bot.message_handler(
-    commands=["coin"]
-)
-def command_coin(message):
-
-    bot.reply_to(
-        message,
-        "🪙 "
-        + random.choice(
-            [
-                "Heads!",
-                "Tails!",
-            ]
-        ),
-    )
-
-
-@bot.message_handler(
-    commands=["choose"]
-)
+@bot.message_handler(commands=["choose"])
 def command_choose(message):
+    raw = message.text.partition(" ")[2]
+    opts = [item.strip() for item in re.split(r"[,|]", raw) if item.strip()]
+    bot.reply_to(message, "🎯 " + random.choice(opts) if len(opts) >= 2 else "Usage: /choose optionA, optionB")
 
-    raw = message.text.partition(
-        " "
-    )[2]
+@bot.message_handler(commands=["id"])
+def command_id(message): bot.reply_to(message, f"🆔 User: {message.from_user.id}\n💬 Chat: {message.chat.id}")
 
-    options = [
-        item.strip()
-        for item in re.split(
-            r"[,|]",
-            raw,
-        )
-        if item.strip()
-    ]
-
-    if len(options) >= 2:
-
-        bot.reply_to(
-            message,
-            "🎯 "
-            + random.choice(options),
-        )
-
-    else:
-
-        bot.reply_to(
-            message,
-            "Usage: /choose chai, coffee",
-        )
-
-
-@bot.message_handler(
-    commands=["id"]
-)
-def command_id(message):
-
-    bot.reply_to(
-        message,
-        f"🆔 User: {message.from_user.id}\n"
-        f"💬 Chat: {message.chat.id}",
-    )
-
-
-@bot.message_handler(
-    commands=["ping"]
-)
+@bot.message_handler(commands=["ping"])
 def ping(message):
-
     started = time.perf_counter()
-
     try:
-
-        sent = bot.reply_to(
-            message,
-            "🏓 Checking...",
-        )
-
-        milliseconds = round(
-            (
-                time.perf_counter()
-                - started
-            )
-            * 1000,
-            1,
-        )
-
-        try:
-
-            bot.edit_message_text(
-                f"🏓 Pong! {milliseconds} ms",
-                message.chat.id,
-                sent.message_id,
-            )
-
-        except Exception:
-            pass
-
+        sent = bot.reply_to(message, "🏓 Checking...")
+        ms = round((time.perf_counter() - started) * 1000, 1)
+        bot.edit_message_text(f"🏓 Pong! {ms} ms", message.chat.id, sent.message_id)
     except Exception:
+        logger.exception("Ping error")
 
-        logger.exception(
-            "ping error"
-        )
-
-
-@bot.message_handler(
-    commands=["roast"]
-)
-def command_roast(message):
-
-    start_game(
-        message,
-        "roast",
-    )
-
+@bot.message_handler(commands=["roast"])
+def command_roast(message): start_game(message, "roast")
 
 # ============================================================
-# CALLBACKS
+# CALLBACK QUERY HANDLER
 # ============================================================
 
-@bot.callback_query_handler(
-    func=lambda call: True
-)
+@bot.callback_query_handler(func=lambda call: True)
 def callback(call):
-
     try:
-
-        try:
-            bot.answer_callback_query(
-                call.id
-            )
-        except Exception:
-            pass
-
-        message = call.message
+        try: bot.answer_callback_query(call.id)
+        except Exception: pass
+        msg = call.message
         data = call.data
 
-        if data == "back":
-
-            bot.edit_message_text(
-                "😎 Venu — kya karna hai?",
-                message.chat.id,
-                message.message_id,
-                reply_markup=main_kb(),
-            )
-
-        elif data == "games":
-
-            bot.edit_message_text(
-                "🎮 Game choose kar:",
-                message.chat.id,
-                message.message_id,
-                reply_markup=game_kb(),
-            )
-
-        elif data in {
-            "guess",
-            "tod",
-            "riddle",
-            "roast",
-        }:
-
-            start_game(
-                message,
-                data,
-            )
-
-        elif data == "talk":
-
-            bot.send_message(
-                message.chat.id,
-                "Bol bhai 😎",
-            )
-
-        elif data == "memory":
-
-            mem(message)
-
-        elif data == "profile":
-
-            profile(message)
-
-        elif data == "fun":
-
-            fun(message)
-
-        elif data == "stats":
-
-            stats(message)
-
-        elif data == "voice":
-
-            voice(message)
-
-        elif data == "help":
-
-            help_(message)
-
-        elif data == "group":
-
-            add_group(message)
-
+        if data == "back": bot.edit_message_text("😎 Venu — Btao kya karna hai?", msg.chat.id, msg.message_id, reply_markup=main_kb())
+        elif data == "games": bot.edit_message_text("🎮 Game choose kar:", msg.chat.id, msg.message_id, reply_markup=game_kb())
+        elif data in {"guess", "tod", "riddle", "roast"}: start_game(msg, data)
+        elif data == "talk": bot.send_message(msg.chat.id, "Bolo, sun rahi hoon 😎")
+        elif data == "memory": mem(msg)
+        elif data == "profile": profile(msg)
+        elif data == "fun": fun(msg)
+        elif data == "stats": stats(msg)
+        elif data == "voice": voice(msg)
+        elif data == "help": help_(msg)
+        elif data == "group": add_group(msg)
         elif data == "clear":
-
-            clear_memory(
-                message.from_user.id
-            )
-
-            bot.edit_message_text(
-                "🧹 Memory clear. Fresh start 😌",
-                message.chat.id,
-                message.message_id,
-                reply_markup=main_kb(),
-            )
-
+            clear_memory(msg.from_user.id)
+            bot.edit_message_text("🧹 Memory reset complete.", msg.chat.id, msg.message_id, reply_markup=main_kb())
     except Exception:
-
-        logger.exception(
-            "callback error"
-        )
-
+        logger.exception("Callback processing error")
 
 # ============================================================
-# TEXT HANDLER
+# MAIN TEXT MESSAGES ROUTER
 # ============================================================
 
 def text_handler(message):
-
     typing = None
-
     try:
-
-        if not group_ok(message):
-            return
-
+        if not group_ok(message): return
         uid = message.from_user.id
-
-        text = strip_mention(
-            message.text or ""
-        ).strip()
-
-        if not text:
-            return
+        text = strip_mention(message.text or "").strip()
+        if not text: return
 
         now = time.time()
-
         with lock:
-
-            previous = last_msg.get(uid)
-
+            prev = last_msg.get(uid)
             last_msg[uid] = now
-
             activity[uid] = now
 
-        if (
-            previous
-            and now - previous < 0.15
-        ):
-            return
+        if prev and now - prev < 0.15: return
 
-        register_user(
-            uid,
-            message.from_user.username,
-            message.from_user.first_name,
-        )
+        register_user(uid, message.from_user.username, message.from_user.first_name)
 
-        actions = {
-            "🎮 Guess Number": "guess",
-            "🔥 Roast Battle": "roast",
-            "🎯 Truth or Dare": "tod",
-            "🧩 Riddle Battle": "riddle",
-        }
-
+        actions = {"🎮 Guess Number": "guess", "🔥 Roast Battle": "roast", "🎯 Truth or Dare": "tod", "🧩 Riddle Battle": "riddle"}
         if text in actions:
-
-            start_game(
-                message,
-                actions[text],
-            )
-
+            start_game(message, actions[text])
             return
 
-        if text == "😂 Joke":
-
-            joke(message)
-            return
-
-        if text == "❤️ Shayari":
-
-            shayari(message)
-            return
-
-        if text == "🎲 Fun Zone":
-
-            fun(message)
-            return
-
-        if text == "📊 My Stats":
-
-            stats(message)
-            return
-
-        if text == "🧠 My Memory":
-
-            mem(message)
-            return
-
-        if text in {
-            "👤 My Profile",
-            "👤 View Profile",
-        }:
-
-            profile(message)
-            return
-
-        if text == "🎙️ Voice Mode":
-
-            voice(message)
-            return
-
-        if text == "ℹ️ Help":
-
-            help_(message)
-            return
-
-        if text == "➕ Add Me In Group":
-
-            add_group(message)
-            return
-
+        if text == "😂 Joke": joke(message); return
+        if text == "❤️ Shayari": shayari(message); return
+        if text == "🎲 Fun Zone": fun(message); return
+        if text == "📊 My Stats": stats(message); return
+        if text == "🧠 My Memory": mem(message); return
+        if text in {"👤 My Profile", "👤 View Profile"}: profile(message); return
+        if text == "🎙️ Voice Mode": voice(message); return
+        if text == "ℹ️ Help": help_(message); return
+        if text == "➕ Add Me In Group": add_group(message); return
         if text == "🧹 Clear Chat":
-
             clear_memory(uid)
-
-            bot.reply_to(
-                message,
-                "🧹 Memory clear. Fresh start 😌",
-            )
-
+            bot.reply_to(message, "🧹 Memory cleared!")
             return
 
-        # ----------------------------------------------------
-        # GAME
-        # ----------------------------------------------------
-
-        if game_process(
-            message,
-            text,
-        ):
-
-            daily(
-                uid,
-                True,
-            )
-
+        if game_process(message, text):
+            daily(uid, True)
             return
-
-        # ----------------------------------------------------
-        # CALCULATOR
-        # ----------------------------------------------------
 
         result = calc(text)
-
         if result is not None:
-
-            bot.reply_to(
-                message,
-                f"🧮 {result}",
-            )
-
+            bot.reply_to(message, f"🧮 {result}")
             daily(uid)
-
             return
 
-        # ----------------------------------------------------
-        # AI
-        # ----------------------------------------------------
-
-        typing = Typing(
-            message.chat.id
-        )
-
+        # AI Processing
+        typing = Typing(message.chat.id)
         typing.start()
 
-        save_message(
-            uid,
-            "user",
-            text,
-        )
+        save_message(uid, "user", text)
+        packet = get_memory(uid, message.from_user.first_name or "Dost")
 
-        packet = get_memory(
-            uid,
-            message.from_user.first_name
-            or "Dost",
-        )
+        reply, detected_mood = ai(uid, packet, text)
+        prefix = name_prefix(uid, message.from_user.first_name)
+        if prefix: reply = prefix + reply
 
-        reply, detected_mood = ai(
-            uid,
-            packet,
-            text,
-        )
-
-        prefix = name_prefix(
-            uid,
-            message.from_user.first_name,
-        )
-
-        if prefix:
-            reply = prefix + reply
-
-        reply = clean_reply(
-            reply
-        )
-
-        update_profile(
-            uid,
-            "current_mood",
-            detected_mood,
-        )
-
-        save_message(
-            uid,
-            "assistant",
-            reply,
-        )
-
+        reply = clean_reply(reply)
+        update_profile(uid, "current_mood", detected_mood)
+        save_message(uid, "assistant", reply)
         daily(uid)
 
         typing.close()
         typing = None
 
-        bot.reply_to(
-            message,
-            reply,
-        )
+        bot.reply_to(message, reply)
 
-        if (
-            uid in tts_users
-            and ENABLE_TTS
-        ):
-
-            threading.Thread(
-                target=tts,
-                args=(
-                    message.chat.id,
-                    reply,
-                ),
-                daemon=True,
-            ).start()
+        if uid in tts_users and ENABLE_TTS:
+            threading.Thread(target=tts, args=(message.chat.id, reply), daemon=True).start()
 
     except Exception:
+        logger.exception("Text handler execution failure")
+        if typing: typing.close()
+        try: bot.reply_to(message, "Connection glitch hua ek sec 😭 phirse bolo.")
+        except Exception: pass
 
-        logger.exception(
-            "text handler error"
-        )
-
-        if typing:
-            typing.close()
-
-        try:
-
-            bot.reply_to(
-                message,
-                "Bhai ek sec, connection hiccup hua 😭 "
-                "phir se bol.",
-            )
-
-        except Exception:
-            pass
-
-
-bot.message_handler(
-    content_types=["text"]
-)(text_handler)
-
+bot.message_handler(content_types=["text"])(text_handler)
 
 # ============================================================
-# VOICE
+# VOICE PROCESSING
 # ============================================================
 
 def transcribe(message):
-
     try:
-
-        file_info = bot.get_file(
-            message.voice.file_id
-        )
-
-        data = bot.download_file(
-            file_info.file_path
-        )
-
-        with tempfile.TemporaryDirectory() as directory:
-
-            ogg_path = os.path.join(
-                directory,
-                "audio.ogg",
-            )
-
-            wav_path = os.path.join(
-                directory,
-                "audio.wav",
-            )
-
-            with open(
-                ogg_path,
-                "wb",
-            ) as file:
-
-                file.write(data)
-
-            AudioSegment.from_file(
-                ogg_path
-            ).export(
-                wav_path,
-                format="wav",
-            )
-
-            recognizer = sr.Recognizer()
-
-            with sr.AudioFile(
-                wav_path
-            ) as source:
-
-                audio = recognizer.record(
-                    source
-                )
-
-            return recognizer.recognize_google(
-                audio,
-                language="hi-IN",
-            )
-
-    except sr.UnknownValueError:
-
+        f_info = bot.get_file(message.voice.file_id)
+        data = bot.download_file(f_info.file_path)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ogg_p = os.path.join(tmpdir, "audio.ogg")
+            wav_p = os.path.join(tmpdir, "audio.wav")
+            with open(ogg_p, "wb") as f: f.write(data)
+            AudioSegment.from_file(ogg_p).export(wav_p, format="wav")
+            rec = sr.Recognizer()
+            with sr.AudioFile(wav_p) as src: audio = rec.record(src)
+            return rec.recognize_google(audio, language="hi-IN")
+    except Exception:
         return None
 
-    except Exception:
-
-        logger.exception(
-            "transcription error"
-        )
-
-        return None
-
-
-def tts(
-    chat_id,
-    text,
-):
-
+def tts(chat_id, text):
     try:
-
-        with tempfile.TemporaryDirectory() as directory:
-
-            audio_path = os.path.join(
-                directory,
-                "venu.mp3",
-            )
-
-            gTTS(
-                text=text,
-                lang="hi",
-            ).save(
-                audio_path
-            )
-
-            with open(
-                audio_path,
-                "rb",
-            ) as audio_file:
-
-                bot.send_voice(
-                    chat_id,
-                    audio_file,
-                    caption="🎙️ Venu",
-                )
-
+        with tempfile.TemporaryDirectory() as tmpdir:
+            a_path = os.path.join(tmpdir, "venu.mp3")
+            gTTS(text=text, lang="hi").save(a_path)
+            with open(a_path, "rb") as f: bot.send_voice(chat_id, f, caption="🎙️ Venu")
     except Exception:
+        logger.exception("TTS Engine Exception")
 
-        logger.exception(
-            "TTS error"
-        )
-
-
-@bot.message_handler(
-    content_types=["voice"]
-)
+@bot.message_handler(content_types=["voice"])
 def voice_handler(message):
-
-    typing = Typing(
-        message.chat.id
-    )
-
+    typing = Typing(message.chat.id)
     try:
-
-        if not group_ok(message):
-            return
-
+        if not group_ok(message): return
         typing.start()
-
         uid = message.from_user.id
+        register_user(uid, message.from_user.username, message.from_user.first_name)
 
-        register_user(
-            uid,
-            message.from_user.username,
-            message.from_user.first_name,
-        )
-
-        text = transcribe(
-            message
-        )
-
+        text = transcribe(message)
         if not text:
-
             typing.close()
-
-            bot.reply_to(
-                message,
-                "🎙️ Awaaz clear nahi aayi 😭",
-            )
-
+            bot.reply_to(message, "🎙️ Awaaz clear nahi thi, wapas bolo.")
             return
 
-        save_message(
-            uid,
-            "user",
-            "[Voice] " + text,
-        )
+        save_message(uid, "user", "[Voice] " + text)
+        packet = get_memory(uid, message.from_user.first_name or "Dost")
 
-        packet = get_memory(
-            uid,
-            message.from_user.first_name
-            or "Dost",
-        )
+        reply, detected_mood = ai(uid, packet, text)
+        reply = clean_reply(reply)
 
-        reply, detected_mood = ai(
-            uid,
-            packet,
-            text,
-        )
-
-        reply = clean_reply(
-            reply
-        )
-
-        update_profile(
-            uid,
-            "current_mood",
-            detected_mood,
-        )
-
-        save_message(
-            uid,
-            "assistant",
-            reply,
-        )
-
+        update_profile(uid, "current_mood", detected_mood)
+        save_message(uid, "assistant", reply)
         daily(uid)
 
         typing.close()
+        bot.reply_to(message, "🎙️ " + reply)
 
-        bot.reply_to(
-            message,
-            "🎙️ " + reply,
-        )
-
-        if (
-            uid in tts_users
-            and ENABLE_TTS
-        ):
-
-            threading.Thread(
-                target=tts,
-                args=(
-                    message.chat.id,
-                    reply,
-                ),
-                daemon=True,
-            ).start()
-
+        if uid in tts_users and ENABLE_TTS:
+            threading.Thread(target=tts, args=(message.chat.id, reply), daemon=True).start()
     except Exception:
-
-        logger.exception(
-            "voice handler error"
-        )
-
+        logger.exception("Voice pipeline failed")
         typing.close()
 
-
 # ============================================================
-# ADMIN
+# ADMIN FUNCTIONS
 # ============================================================
 
-def is_admin(message):
+def is_admin(message): return bool(ADMIN_ID and message.from_user and message.from_user.id == ADMIN_ID)
 
-    return bool(
-        ADMIN_ID
-        and message.from_user
-        and message.from_user.id == ADMIN_ID
-    )
-
-
-@bot.message_handler(
-    commands=["refresh"]
-)
+@bot.message_handler(commands=["refresh"])
 def refresh(message):
-
     if not is_admin(message):
-
-        bot.reply_to(
-            message,
-            "⛔ Admin only.",
-        )
-
+        bot.reply_to(message, "⛔ Restricted area.")
         return
-
     with lock:
+        memory.clear(); registered.clear(); recent_replies.clear(); games.clear(); last_msg.clear(); name_time.clear(); activity.clear()
+    bot.reply_to(message, "♻️ System state refreshed.")
 
-        memory.clear()
-        registered.clear()
-        recent_replies.clear()
-        games.clear()
-        last_msg.clear()
-        name_time.clear()
-        activity.clear()
-
-    bot.reply_to(
-        message,
-        "♻️ State refreshed.",
-    )
-
-
-@bot.message_handler(
-    commands=["broadcast"]
-)
+@bot.message_handler(commands=["broadcast"])
 def broadcast(message):
-
     if not is_admin(message):
-
-        bot.reply_to(
-            message,
-            "⛔ Admin only.",
-        )
-
+        bot.reply_to(message, "⛔ Restricted area.")
         return
-
-    text = message.text.partition(
-        " "
-    )[2].strip()
-
+    text = message.text.partition(" ")[2].strip()
     if not text:
-
-        bot.reply_to(
-            message,
-            "Usage: /broadcast your message",
-        )
-
+        bot.reply_to(message, "Usage: /broadcast message_content")
         return
 
-    rows = db.request(
-        "GET",
-        "users?select=user_id",
-        timeout=10,
-    ) or []
-
-    bot.reply_to(
-        message,
-        f"📢 Sending to {len(rows)} users...",
-    )
+    rows = db.request("GET", "users?select=user_id", timeout=10) or []
+    bot.reply_to(message, f"📢 Broadcasting to {len(rows)} users...")
 
     def worker():
-
-        success = 0
-        failed = 0
-
+        s, f = 0, 0
         for row in rows:
-
             try:
+                bot.send_message(int(row["user_id"]), text)
+                s += 1
+                time.sleep(0.05)
+            except Exception: f += 1
+        try: bot.send_message(message.chat.id, f"📢 Broadcast finished.\n✅ Sent: {s}\n❌ Failed: {f}")
+        except Exception: pass
 
-                user_id = int(
-                    row["user_id"]
-                )
-
-                bot.send_message(
-                    user_id,
-                    text,
-                )
-
-                success += 1
-
-                time.sleep(
-                    0.05
-                )
-
-            except Exception:
-
-                failed += 1
-
-        try:
-
-            bot.send_message(
-                message.chat.id,
-                "📢 Done\n"
-                f"✅ {success}\n"
-                f"❌ {failed}",
-            )
-
-        except Exception:
-            pass
-
-    threading.Thread(
-        target=worker,
-        daemon=True,
-    ).start()
-
+    threading.Thread(target=worker, daemon=True).start()
 
 # ============================================================
-# CLEANUP
+# CLEANUP DAEMON & POLLING
 # ============================================================
 
 def cleanup():
-
     while True:
-
         time.sleep(300)
-
         try:
-
             now = time.time()
-
             with lock:
-
-                for uid, game in list(
-                    games.items()
-                ):
-
-                    created = game.get(
-                        "created",
-                        now,
-                    )
-
-                    if now - created > 1800:
-
-                        games.pop(
-                            uid,
-                            None,
-                        )
-
-                for uid, last_activity in list(
-                    activity.items()
-                ):
-
-                    if (
-                        now - last_activity
-                        > 7200
-                    ):
-
-                        activity.pop(
-                            uid,
-                            None,
-                        )
-
-                        last_msg.pop(
-                            uid,
-                            None,
-                        )
-
+                for uid, g in list(games.items()):
+                    if now - g.get("created", now) > 1800: games.pop(uid, None)
+                for uid, act in list(activity.items()):
+                    if now - act > 7200:
+                        activity.pop(uid, None)
+                        last_msg.pop(uid, None)
         except Exception:
-
-            logger.exception(
-                "cleanup error"
-            )
-
-
-# ============================================================
-# TELEGRAM POLLING
-# ============================================================
+            logger.exception("Cleanup routine failed")
 
 def start_polling():
-
-    """
-    Starts Telegram long polling.
-
-    IMPORTANT:
-    Telegram allows only ONE getUpdates
-    consumer for a bot token.
-
-    If another Render service/local Python
-    process is using the same BOT_TOKEN,
-    Telegram returns:
-
-        409 Conflict:
-        terminated by other getUpdates request
-    """
-
     reconnect_delay = 5
-
     while True:
-
         try:
-
-            logger.info(
-                "Starting Telegram polling..."
-            )
-
-            bot.infinity_polling(
-                timeout=25,
-                long_polling_timeout=25,
-                skip_pending=True,
-                allowed_updates=[
-                    "message",
-                    "callback_query",
-                ],
-                none_stop=False,
-            )
-
-            logger.warning(
-                "Telegram polling stopped."
-            )
-
+            logger.info("Starting Telegram polling engine...")
+            bot.infinity_polling(timeout=25, long_polling_timeout=25, skip_pending=True, allowed_updates=["message", "callback_query"], none_stop=False)
             reconnect_delay = 5
-
-        except KeyboardInterrupt:
-
-            logger.info(
-                "Polling stopped by keyboard."
-            )
-
-            break
-
         except ApiTelegramException as error:
-
-            error_text = str(error)
-
-            if (
-                "409" in error_text
-                or "Conflict" in error_text
-                or "terminated by other getUpdates"
-                in error_text
-            ):
-
-                logger.error(
-                    "=================================================="
-                )
-
-                logger.error(
-                    "TELEGRAM 409 CONFLICT"
-                )
-
-                logger.error(
-                    "Another bot instance is using "
-                    "the same BOT_TOKEN."
-                )
-
-                logger.error(
-                    "Stop the other local/Render instance "
-                    "before polling again."
-                )
-
-                logger.error(
-                    "=================================================="
-                )
-
-                # Do not hammer Telegram continuously.
+            if "409" in str(error) or "Conflict" in str(error):
+                logger.error("TELEGRAM 409 CONFLICT: Duplicate instance detected. Sleep for 15s...")
                 time.sleep(15)
-
                 continue
-
-            logger.exception(
-                "Telegram API error"
-            )
-
-            time.sleep(
-                reconnect_delay
-            )
-
+            logger.exception("Telegram API Failure")
+            time.sleep(reconnect_delay)
         except Exception:
-
-            logger.exception(
-                "Polling crashed; reconnecting"
-            )
-
-            time.sleep(
-                reconnect_delay
-            )
-
-            reconnect_delay = min(
-                reconnect_delay * 2,
-                60,
-            )
-
+            logger.exception("Bot Crash Encountered. Restarting...")
+            time.sleep(reconnect_delay)
+            reconnect_delay = min(reconnect_delay * 2, 60)
 
 # ============================================================
-# MAIN
+# MAIN ENTRYPOINT
 # ============================================================
 
 def main():
+    logger.info("🚀 Venu Production Bot Initializing")
+    threading.Thread(target=run_flask, daemon=True).start()
+    threading.Thread(target=cleanup, daemon=True).start()
 
-    logger.info(
-        "=============================================="
-    )
-
-    logger.info(
-        "🚀 Venu production bot starting"
-    )
-
-    logger.info(
-        "AI Base URL: %s",
-        AI_BASE_URL,
-    )
-
-    logger.info(
-        "AI Model: %s",
-        AI_MODEL,
-    )
-
-    logger.info(
-        "AI Timeout: %s",
-        AI_TIMEOUT,
-    )
-
-    logger.info(
-        "Telegram Bot: @%s",
-        BOT_USERNAME,
-    )
-
-    logger.info(
-        "Telegram Bot ID: %s",
-        BOT_ID,
-    )
-
-    logger.info(
-        "=============================================="
-    )
-
-    # Flask health server
-    threading.Thread(
-        target=run_flask,
-        daemon=True,
-    ).start()
-
-    # Cleanup worker
-    threading.Thread(
-        target=cleanup,
-        daemon=True,
-    ).start()
-
-    # Remove webhook before polling
     try:
-
-        logger.info(
-            "Removing Telegram webhook..."
-        )
-
         bot.remove_webhook()
-
         time.sleep(1)
-
     except Exception:
+        logger.exception("Remove Webhook Exception")
 
-        logger.exception(
-            "remove webhook failed"
-        )
-
-    # Start polling
     start_polling()
 
-
-# ============================================================
-# ENTRY
-# ============================================================
-
 if __name__ == "__main__":
-
     main()
